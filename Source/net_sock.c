@@ -4765,7 +4765,15 @@ NET_SOCK_ID  NetSock_Accept (NET_SOCK_ID         sock_id,
    secure = DEF_BIT_IS_SET(p_sock_accept->Flags, NET_SOCK_FLAG_SOCK_SECURE);
    if (secure == DEF_YES) {                                             /* If sock secure, ...                          */
        DEF_BIT_SET(p_sock_accept->Flags, NET_SOCK_FLAG_SOCK_SECURE_NEGO);
+
+       Net_GlobalLockRelease();                                         /* ... release global lock during handshake     */
        NetSecure_SockAccept(p_sock_listen, p_sock_accept, p_err);       /* ... handle accept secure session.            */
+       Net_GlobalLockAcquire((void *)&NetSock_Accept, &err);
+       if (err != NET_ERR_NONE) {
+           *p_err  = err;
+           goto exit_lock_fault;
+       }
+
        DEF_BIT_CLR(p_sock_accept->Flags, NET_SOCK_FLAG_SOCK_SECURE_NEGO);
        if (*p_err != NET_SOCK_ERR_NONE) {
             NetSock_CloseHandler(p_sock_accept, DEF_YES, DEF_YES);
