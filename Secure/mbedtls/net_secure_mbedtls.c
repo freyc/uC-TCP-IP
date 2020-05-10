@@ -14,30 +14,37 @@ static CPU_SIZE_T  *SSL_StoreMemPtr;
 
                                                                 /* Calculate RAM usage as recommended by SEGGER manual. */
 #define  NET_SECURE_SSL_CONN_NBR_MAX          (NET_SECURE_CFG_MAX_NBR_SOCK_SERVER + NET_SECURE_CFG_MAX_NBR_SOCK_CLIENT)
-#define  NET_SECURE_SSL_MEM_SIZE              (((700u + 500u) + (2u * 16u * 1024u)) * NET_SECURE_SSL_CONN_NBR_MAX + 512u)
+//#define  NET_SECURE_SSL_MEM_SIZE              (((700u + 500u) + (2u * 16u * 1024u)) * NET_SECURE_SSL_CONN_NBR_MAX + 512u)
 #define  NET_SECURE_SSL_MIN_MEM_SIZE          (34u * 1024u)
-
+#define  NET_SECURE_SSL_MEM_SIZE              (100000)
 typedef struct {
-  CPU_CHAR                          *CommonNamePtr;
-  NET_SOCK_SECURE_UNTRUSTED_REASON   UntrustedReason;
-  NET_SOCK_SECURE_TRUST_FNCT         TrustCallbackFnctPtr;
-  //NET_SECURE_EMSSL_DATA             *DataPtr;
-  NET_SOCK_SECURE_TYPE               Type;
-  mbedtls_ssl_context                 Context;
-  mbedtls_x509_crt                    Cert;
-  mbedtls_ssl_config                  Config;
-  mbedtls_pk_context                  Key;
-  mbedtls_ctr_drbg_context            Rng;
-  mbedtls_entropy_context             Entropy;
+    CPU_CHAR                          *CommonNamePtr;
+    NET_SOCK_SECURE_UNTRUSTED_REASON   UntrustedReason;
+    NET_SOCK_SECURE_TRUST_FNCT         TrustCallbackFnctPtr;
+    //NET_SECURE_EMSSL_DATA             *DataPtr;
+    NET_SOCK_SECURE_TYPE               Type;
+    mbedtls_ssl_context                 Context;
+    mbedtls_x509_crt                    Cert;
+    mbedtls_ssl_config                  Config;
+    mbedtls_pk_context                  Key;
+    mbedtls_ctr_drbg_context            Rng;
+    mbedtls_entropy_context             Entropy;
 } NetSecure_SSL_Context;
 
 unsigned char memory_buf[100000];
+
+#include <mbedtls/debug.h>
 
 void NetSecure_Init(NET_ERR *p_err) {
   *p_err = NET_SECURE_ERR_NONE;
   LIB_ERR lib_err;
 
-  mbedtls_memory_buffer_alloc_init( memory_buf, sizeof(memory_buf) );
+  SSL_StoreMemPtr = Mem_HeapAlloc(NET_SECURE_SSL_MEM_SIZE, sizeof(CPU_SIZE_T), NULL, &lib_err);
+
+  mbedtls_memory_buffer_alloc_init( memory_buf, 100000 );
+
+  
+  mbedtls_debug_set_threshold(4);
 
     if (NET_SECURE_SSL_CONN_NBR_MAX > 0u) {
         Mem_DynPoolCreate("SSL Session pool",
@@ -136,14 +143,18 @@ void NetSecure_InitSession(NET_SOCK *p_sock, NET_ERR *p_err) {
 
 void NetSecure_SockClose(NET_SOCK *p_sock, NET_ERR *p_err) {
   //asm volatile("bkpt #0");
+  printf("SSL-mbedtls: NetSecure_SockClose not yet implemented\n");
+  //mbedtls_ssl_close_notify()
 }
 
 void NetSecure_SockCloseNotify(NET_SOCK *p_sock, NET_ERR *p_err) {
   //asm volatile("bkpt #0");
+  printf("SSL-mbedtls: NetSecure_SockCloseNotify not yet implemented\n");
 }
 
 void NetSecure_SockConn(NET_SOCK *p_sock, NET_ERR *p_err) {
   //asm volatile("bkpt #0");
+  printf("SSL-mbedtls: NetSecure_SockConn not yet implemented\n");
 }
 
 void NetSecure_SockAccept(NET_SOCK *p_sock_listen, NET_SOCK *p_sock_accept,
@@ -230,6 +241,10 @@ void NetSecure_SockAccept(NET_SOCK *p_sock_listen, NET_SOCK *p_sock_accept,
     //asm volatile("bkpt #0");
 }
 
+static void ssl_debug_fn(void * ctx, int level, const char * filename, int line, const char * msg) {
+    printf("%s", msg);
+}
+
 CPU_BOOLEAN
 NetSecure_SockCertKeyCfg(NET_SOCK *p_sock, NET_SOCK_SECURE_TYPE sock_type,
                          const CPU_INT08U *p_buf_cert, CPU_SIZE_T buf_cert_size,
@@ -292,6 +307,8 @@ NetSecure_SockCertKeyCfg(NET_SOCK *p_sock, NET_SOCK_SECURE_TYPE sock_type,
         *p_err = NET_SECURE_ERR_INSTALL;
         return;
     }
+
+    mbedtls_ssl_conf_dbg(&p_session_desc->Config, ssl_debug_fn, 0);
 
     mbedtls_ctr_drbg_seed( &p_session_desc->Rng, mbedtls_entropy_func, &p_session_desc->Entropy, 
         (const unsigned char *) "Hello world",11 );
@@ -389,25 +406,95 @@ NET_SOCK_RTN_CODE NetSecure_SockTxDataHandler(NET_SOCK *p_sock,
                                               void *p_data_buf,
                                               CPU_INT16U data_buf_len,
                                               NET_ERR *p_err) {
-                                                  asm volatile("bkpt #0");
+
+    CPU_INT32S          result;
+    NetSecure_SSL_Context* p_session = p_sock;
+    NET_SOCK_RTN_CODE   ret_err;
+    NET_SOCK_ID         sock_id;
+    NET_ERR             net_err;
+
+
+    ret_err   =  NET_SOCK_BSD_ERR_TX;
+   *p_err     =  NET_SOCK_ERR_NONE;
+    sock_id   =  p_sock->ID;
+    p_session = (NetSecure_SSL_Context *)p_sock->SecureSession;
+
+    if (p_sock->SecureSession == (NetSecure_SSL_Context *)0) {
+       *p_err = NET_SECURE_ERR_NULL_PTR;
+        return (ret_err);
+    }
+             
+                                                       /* Only use SSL_SESSION_Send() if handshake succeeded.  */
+    //if (p_session->State == SSL_CONNECTED) 
+    {
+        //result = SSL_SESSION_Send(p_session,
+        //                          p_data_buf,
+        //                          data_buf_len);
+        result = mbedtls_ssl_write(&p_session->Context, p_data_buf, data_buf_len);
+    } 
+    //else 
+    //{
+    //    result = NetSock_TxDataHandlerStream( sock_id,
+    //                                          p_sock,
+    //                                          p_data_buf,
+    //                                          data_buf_len,
+    //                                          NET_SOCK_FLAG_NONE,
+    //                                         &net_err);
+    //}
+
+    if (result < 0) {
+       *p_err = NET_ERR_TX;
+    } else {
+        ret_err = result;
+    }
+
+    return (ret_err);
+
+
                                               }
 
 
 int NetSecure_mbedtls_read(void *ctx, unsigned char *buf, size_t len) {
     NET_SOCK* p_sock = ctx;
-    
     NET_ERR net_err;
-    NET_SOCK_RTN_CODE ret = NetSock_RxDataHandlerStream(p_sock->ID, p_sock, buf, len, 0, 0, 0, &net_err);
-    //asm volatile("bkpt #0");
+    NET_SOCK_RTN_CODE ret;
+    CPU_BOOLEAN block;
+
+    block = DEF_BIT_IS_CLR(p_sock->Flags, NET_SOCK_FLAG_SOCK_NO_BLOCK);
+    DEF_BIT_CLR(p_sock->Flags, NET_SOCK_FLAG_SOCK_NO_BLOCK);
+
+
+    ret = NetSock_RxDataHandlerStream(p_sock->ID, p_sock, buf, len, 0, 0, 0, &net_err);
+
+    if (!block) {
+        DEF_BIT_SET(p_sock->Flags, NET_SOCK_FLAG_SOCK_NO_BLOCK);
+    }
+
+    if(ret < 0) {
+    //    asm volatile("bkpt #0");
+    }
     return ret;
 }
 
 int NetSecure_mbedtls_write(void *ctx, const unsigned char *buf, size_t len) {
     NET_SOCK* p_sock = ctx;
-    
     NET_ERR net_err;
-    NET_SOCK_RTN_CODE ret = NetSock_TxDataHandlerStream(p_sock->ID, p_sock, buf, len, 0, &net_err);
-    //asm volatile("bkpt #0");
+    NET_SOCK_RTN_CODE ret = NET_SOCK_BSD_ERR_TX;
+
+    if ((p_sock->State != NET_SOCK_STATE_CONN     )  &&         /* Data cannot be sent if socket is closed or closing.  */
+        (p_sock->State != NET_SOCK_STATE_CONN_DONE)) {
+        printf("SSL: socket closed or closing\n");
+        return (ret);
+    }
+    
+    ret = NetSock_TxDataHandlerStream(p_sock->ID, p_sock, buf, len, 0, &net_err);
+
+    
+
+    if(ret < 0) {
+        //asm volatile("bkpt #0");
+        //printf("SSL: rx error: %d\n", ret);
+    }
     return ret;
 }
 
